@@ -1,9 +1,9 @@
 #!/bin/sh
 
 # ==========================================
-# 原版 OpenWrt 24.10 专属插件追新脚本 (零内存溢出版)
-# 包含: OpenClash, Passwall, DDNS-GO, Argon, WG+扫码
-# 特性: 拒绝庞大源防 Killed / GitHub全直连 / 根治 wget-any
+# 原版 OpenWrt 24.10 专属插件追新脚本 (原生增强版)
+# 包含: OpenClash, Passwall, DDNS-GO(带中文), Argon, WG+扫码
+# 特性: 拒绝庞大源防 Killed / 核心直连 / 原生源智能互补
 # ==========================================
 
 RED='\033[0;31m'
@@ -21,7 +21,6 @@ UPDATE_BASE=0
 OC_API="https://api.github.com/repos/vernesong/OpenClash/releases"
 PW_API="https://api.github.com/repos/xiaorouji/openwrt-passwall/releases"
 ARGON_API="https://api.github.com/repos/jerrykuku/luci-theme-argon/releases"
-DDNSGO_API="https://api.github.com/repos/sirpdboy/luci-app-ddns-go/releases"
 
 # ==========================================================
 
@@ -60,11 +59,12 @@ execute_update() {
         rm -rf /var/opkg-lists/custom_plugins 2>/dev/null
         
         opkg update >/dev/null 2>&1
-        opkg install curl ca-bundle ca-certificates 2>/dev/null | grep -Ev "remove_obsolesced_files"
+        # 补齐原生环境与新版 UI 兼容包 (luci-compat)
+        opkg install curl ca-bundle ca-certificates luci-compat 2>/dev/null | grep -Ev "remove_obsolesced_files"
     else
         sed -i '/kiddin9/d' /etc/apk/repositories 2>/dev/null
         apk update >/dev/null 2>&1
-        apk add curl ca-certificates 2>/dev/null
+        apk add curl ca-certificates luci-compat 2>/dev/null
     fi
     echo -e "✔ 官方原生源更新完毕，内存极度安全！"
 
@@ -122,28 +122,11 @@ execute_update() {
         fi
     fi
 
-    # ---------------- 第 4 步：直连更新增强插件 (DDNS/Argon/WG) ----------------
+    # ---------------- 第 4 步：更新增强插件 (混合源智能拉取) ----------------
     if [ "$UPDATE_BASE" -eq 1 ]; then
-        echo -e "\n${GREEN}[4/4] 正在通过 GitHub 直连安装 DDNS-GO 与 Argon 主题...${PLAIN}"
+        echo -e "\n${GREEN}[4/4] 正在安装 DDNS-GO 与 Argon 主题 等基础环境...${PLAIN}"
         
-        # 1. GitHub 直连拉取 DDNS-GO (原版系统必备)
-        echo -e "✔ 正在拉取 DDNS-GO..."
-        if [ "$SELECTED_MANAGER" = "apk" ]; then
-            DDNS_URL=$(get_latest_github_url "$DDNSGO_API" "https://[^\"]*luci-app-ddns-go[^\"]*\.apk")
-            DDNS_FILE="/tmp/ddnsgo.apk"
-        else
-            DDNS_URL=$(get_latest_github_url "$DDNSGO_API" "https://[^\"]*luci-app-ddns-go[^\"]*_all\.ipk")
-            DDNS_FILE="/tmp/ddnsgo.ipk"
-        fi
-        
-        if [ -n "$DDNS_URL" ]; then
-            wget -qO "$DDNS_FILE" "$DDNS_URL"
-            [ "$SELECTED_MANAGER" = "apk" ] && apk add -u --allow-untrusted --force-overwrite "$DDNS_FILE" >/dev/null 2>&1
-            [ "$SELECTED_MANAGER" = "opkg" ] && opkg install "$DDNS_FILE" >/dev/null 2>&1
-            rm -f "$DDNS_FILE"
-        fi
-
-        # 2. GitHub 直连拉取 Argon 主题 (越过 wget-any 报错)
+        # 1. GitHub 直连拉取 Argon 主题 (越过 wget-any 报错)
         echo -e "✔ 正在拉取 Argon 主题并处理底层依赖..."
         if [ "$SELECTED_MANAGER" = "apk" ]; then
             ARGON_URL=$(get_latest_github_url "$ARGON_API" "https://[^\"]*luci-theme-argon[^\"]*\.apk")
@@ -158,9 +141,7 @@ execute_update() {
             if [ "$SELECTED_MANAGER" = "apk" ]; then
                 apk add -u --allow-untrusted --force-overwrite "$ARGON_FILE" >/dev/null 2>&1
             else
-                # 原版系统强制忽略 wget-any 依赖
                 opkg install --force-depends --force-overwrite "$ARGON_FILE" >/dev/null 2>&1
-                # 暴力治愈 LuCI 网页端的依赖强迫症报错
                 sed -i 's/, wget-any//g' /usr/lib/opkg/status 2>/dev/null
                 sed -i 's/wget-any, //g' /usr/lib/opkg/status 2>/dev/null
                 sed -i 's/Depends: wget-any/Depends: curl/g' /usr/lib/opkg/status 2>/dev/null
@@ -168,12 +149,13 @@ execute_update() {
             rm -f "$ARGON_FILE"
         fi
 
-        # 3. 安全拉取 WireGuard 与 二维码引擎 (只能走官方源防止内核崩溃)
-        echo -e "✔ 正在从官方源安全提取 WireGuard 组件与扫码引擎..."
+        # 2. 安全拉取 DDNS-GO(带中文包)、WireGuard 与 二维码引擎
+        echo -e "✔ 正在从官方源安全提取原生基础组件..."
         if [ "$SELECTED_MANAGER" = "apk" ]; then
-            apk add -u luci-proto-wireguard wireguard-tools qrencode >/dev/null 2>&1
+            apk add -u luci-app-ddns-go luci-i18n-ddns-go-zh-cn luci-proto-wireguard wireguard-tools qrencode >/dev/null 2>&1
         else
-            opkg install luci-proto-wireguard wireguard-tools qrencode 2>&1 | grep -Ev "remove_obsolesced_files|Collected errors"
+            # 直接通过官方包管理器安装原生的 DDNS-GO 及其对应的中文语言包
+            opkg install luci-app-ddns-go luci-i18n-ddns-go-zh-cn luci-proto-wireguard wireguard-tools qrencode 2>&1 | grep -Ev "remove_obsolesced_files|Collected errors"
         fi
         echo -e "✔ 基础扩展部署完毕。"
     fi
@@ -199,7 +181,7 @@ restart_services() {
     fi
 
     echo -e "\n${GREEN}==========================================${PLAIN}"
-    echo -e "${GREEN}    🎉 原版降伏成功，所有插件均已全直连更新完毕!  ${PLAIN}"
+    echo -e "${GREEN}    🎉 完美适配原版，所有插件均已安全部署完毕!  ${PLAIN}"
     echo -e "${GREEN}==========================================${PLAIN}"
     exit 0
 }
@@ -207,17 +189,17 @@ restart_services() {
 plugin_menu() {
     clear
     echo -e "${CYAN}==========================================${PLAIN}"
-    echo -e "${CYAN}   目标架构: ${SELECTED_MANAGER} 模式 | 原版专属纯净版  ${PLAIN}"
+    echo -e "${CYAN}   目标架构: ${SELECTED_MANAGER} 模式 | 原版原生智选版  ${PLAIN}"
     echo -e "${CYAN}==========================================${PLAIN}"
     echo -e "${YELLOW}[ 科学上网系列 (全网 API 直连) ]${PLAIN}"
     echo -e "${GREEN}1.${PLAIN} 仅拉取更新 ${YELLOW}OpenClash${PLAIN}"
     echo -e "${GREEN}2.${PLAIN} 仅拉取更新 ${YELLOW}Passwall${PLAIN}"
     echo -e "------------------------------------------"
-    echo -e "${YELLOW}[ 增强扩展系列 (全网 API 直连) ]${PLAIN}"
-    echo -e "${GREEN}3.${PLAIN} 安装/更新 ${YELLOW}DDNS-GO + Argon + WireGuard (+扫码引擎)${PLAIN}"
+    echo -e "${YELLOW}[ 增强扩展系列 (官方原生提取) ]${PLAIN}"
+    echo -e "${GREEN}3.${PLAIN} 安装/更新 ${YELLOW}DDNS-GO(中) + Argon + WG(带扫码)${PLAIN}"
     echo -e "------------------------------------------"
     echo -e "${YELLOW}[ 一键全家桶 ]${PLAIN}"
-    echo -e "${GREEN}4.${PLAIN} ${CYAN}同时拉取更新上述所有插件 (默认推荐)${PLAIN}"
+    echo -e "${GREEN}4.${PLAIN} ${CYAN}同时部署更新上述所有插件 (默认推荐)${PLAIN}"
     echo -e "------------------------------------------"
     echo -e "${GREEN}0.${PLAIN} 退出脚本"
     echo -e "${CYAN}==========================================${PLAIN}"
