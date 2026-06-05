@@ -5,9 +5,10 @@
 💻 第一步：在软路由上一键执行
 以后无论您面对的是哪台 OpenWrt，或者是哪个版本的固件，只需要通过 SSH 登录到软路由后台，直接复制并执行下面这行命令即可（请替换为您自己的脚本链接）：
 
-Bash
+```bash
 
 sh -c "$(curl -kLs https://raw.githubusercontent.com/JBl9527/update_plugins.sh/main/update_plugins.sh)"
+```
 
 (注：加入了 -k 参数是为了防止某些老旧软路由的 SSL 证书过期导致 curl 下载脚本失败。)
 
@@ -48,10 +49,14 @@ Q3：源添加过一次，第二次跑脚本会重复添加导致配置文件爆
 
 🟢 情况一：软路由已经能科学上网（直连 GitHub）
 直接复制这行执行：
-sh -c "$(curl -kLs https://raw.githubusercontent.com/JBl9527/update_plugins.sh/main/update_plugins.sh)"
 
+```bash
+sh -c "$(curl -kLs https://raw.githubusercontent.com/JBl9527/update_plugins.sh/main/update_plugins.sh)"
+```
 
 🔴 情况二：软路由在国内纯净网络（无法直连 GitHub）
 利用国内的 Ghproxy 镜像加速代理，直接复制这行执行：
 
+```bash
 sh -c "$(curl -kLs https://mirror.ghproxy.com/https://raw.githubusercontent.com/JBl9527/update_plugins.sh/main/update_plugins.sh)"
+```
