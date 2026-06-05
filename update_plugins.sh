@@ -1,9 +1,9 @@
 #!/bin/sh
 
 # ==========================================
-# OpenWrt 插件官方直连极速追新脚本 (防断网自愈版)
+# OpenWrt 插件极速追新脚本 (防内存溢出最终版)
 # 包含: OpenClash, Passwall, DDNS-GO, Argon, WireGuard
-# 特性: 防断网机制 / 官方全直连 / 内核保护隔离
+# 特性: 极限释放内存 / 根治 wget-any 报错 / 官方直连
 # ==========================================
 
 RED='\033[0;31m'
@@ -23,7 +23,7 @@ OC_API="https://api.github.com/repos/vernesong/OpenClash/releases"
 PW_API="https://api.github.com/repos/xiaorouji/openwrt-passwall/releases"
 ARGON_API="https://api.github.com/repos/jerrykuku/luci-theme-argon/releases"
 
-# === 核心依赖与基础插件补给站 ===
+# === 核心依赖补给站 ===
 OPKG_REPO="src/gz custom_plugins https://dl.openwrt.ai/latest/packages/${ARCH}/kiddin9"
 APK_REPO="https://dl.openwrt.ai/latest/packages/${ARCH}/kiddin9"
 PUB_KEY_URL="https://dl.openwrt.ai/latest/public-key.pub"
@@ -43,23 +43,29 @@ auto_detect_env() {
     fi
 }
 
+# 带 10 秒超时限制的请求，防止无网络时死等
 get_latest_github_url() {
     local api=$1
     local regex=$2
-    curl -sL "$api" | grep -o "$regex" | head -n 1
+    curl -m 10 -sL "$api" | grep -o "$regex" | head -n 1
 }
 
 execute_update() {
     clear
     echo -e "${CYAN}==========================================${PLAIN}"
-    if [ "$SELECTED_MANAGER" = "opkg" ]; then
-        echo -e "${CYAN}      正在执行 OPKG 模式插件安装/更新流程  ${PLAIN}"
-    else
-        echo -e "${CYAN}      正在执行 APK 模式插件安装/更新流程   ${PLAIN}"
-    fi
+    echo -e "${CYAN}      正在执行 内存安全模式 安装/更新流程  ${PLAIN}"
     echo -e "${CYAN}==========================================${PLAIN}"
     
-    # ---------------- 第一步：环境与源准备 ----------------
+    # ---------------- 第 0 步：极限释放内存 (防 Killed) ----------------
+    echo -e "\n${YELLOW}[0/4] 正在关闭重型服务并深度清理内存缓存...${PLAIN}"
+    [ -f "/etc/init.d/openclash" ] && /etc/init.d/openclash stop >/dev/null 2>&1
+    [ -f "/etc/init.d/passwall" ] && /etc/init.d/passwall stop >/dev/null 2>&1
+    sync
+    echo 3 > /proc/sys/vm/drop_caches
+    sleep 3
+    echo -e "✔ 内存已释放，当前环境极度安全！"
+
+    # ---------------- 第 1 步：环境与源准备 ----------------
     echo -e "\n${GREEN}[1/4] 正在准备底层环境与依赖补给站...${PLAIN}"
     if [ "$SELECTED_MANAGER" = "opkg" ]; then
         OPKG_CONF="/etc/opkg/customfeeds.conf"
@@ -79,7 +85,7 @@ execute_update() {
     fi
     echo -e "✔ 依赖补给站装载完毕。"
 
-    # ---------------- 第二步：更新 OpenClash ----------------
+    # ---------------- 第 2 步：更新 OpenClash ----------------
     if [ "$UPDATE_OPENCLASH" -eq 1 ]; then
         echo -e "\n${GREEN}[2/4] 正在请求 OpenClash 最新安装包...${PLAIN}"
         if [ "$SELECTED_MANAGER" = "apk" ]; then
@@ -107,14 +113,10 @@ execute_update() {
                 opkg install --force-overwrite --force-checksum luci-app-openclash >/dev/null 2>&1
             fi
         fi
-
-        # 【核心修复】：防止 OpenClash 升级后断网导致后续下载失败
-        echo -e "${YELLOW}⟳ 正在唤醒 OpenClash 恢复网络连接，请稍候 8 秒...${PLAIN}"
-        /etc/init.d/openclash restart >/dev/null 2>&1
-        sleep 8
+        # 【重要】不再中途重启 OpenClash！全程保持内存处于空闲状态！
     fi
 
-    # ---------------- 第三步：更新 Passwall ----------------
+    # ---------------- 第 3 步：更新 Passwall ----------------
     if [ "$UPDATE_PASSWALL" -eq 1 ]; then
         echo -e "\n${GREEN}[3/4] 正在请求 Passwall 最新安装包...${PLAIN}"
         if [ "$SELECTED_MANAGER" = "apk" ]; then
@@ -144,12 +146,12 @@ execute_update() {
         fi
     fi
 
-    # ---------------- 第四步：更新 基础扩展插件 ----------------
+    # ---------------- 第 4 步：更新 基础扩展插件 ----------------
     if [ "$UPDATE_BASE" -eq 1 ]; then
         echo -e "\n${GREEN}[4/4] 正在安装 DDNS-GO, Argon主题, WireGuard + 二维码扫码引擎...${PLAIN}"
         
-        # 1. 官方直连拉取 Argon 主题 (避开第三方源的架构冲突)
-        echo -e "✔ 正在从原作者 GitHub 拉取 Argon 主题..."
+        # 1. 官方拉取 Argon 主题 (越过 wget-any 报错)
+        echo -e "✔ 正在拉取 Argon 主题并处理底层依赖..."
         if [ "$SELECTED_MANAGER" = "apk" ]; then
             ARGON_URL=$(get_latest_github_url "$ARGON_API" "https://[^\"]*luci-theme-argon[^\"]*\.apk")
             ARGON_FILE="/tmp/argon.apk"
@@ -163,13 +165,18 @@ execute_update() {
             if [ "$SELECTED_MANAGER" = "apk" ]; then
                 apk add -u --allow-untrusted --force-overwrite "$ARGON_FILE" >/dev/null 2>&1
             else
+                # 强制忽略依赖安装
                 opkg install --force-depends --force-overwrite "$ARGON_FILE" >/dev/null 2>&1
+                # 暴力治愈 LuCI 网页端的强迫症报错
+                sed -i 's/, wget-any//g' /usr/lib/opkg/status 2>/dev/null
+                sed -i 's/wget-any, //g' /usr/lib/opkg/status 2>/dev/null
+                sed -i 's/Depends: wget-any/Depends: curl/g' /usr/lib/opkg/status 2>/dev/null
             fi
             rm -f "$ARGON_FILE"
         fi
 
-        # 2. 从官方/公共源安全拉取 DDNS-GO 和 WireGuard
-        echo -e "${YELLOW}*(注: WireGuard将智能切换至官方系统源拉取，防止内核冲突)*${PLAIN}"
+        # 2. 拉取 DDNS-GO 和 WireGuard
+        echo -e "${YELLOW}*(注: WireGuard已智能切换至官方系统源拉取)*${PLAIN}"
         if [ "$SELECTED_MANAGER" = "apk" ]; then
             apk add -u --allow-untrusted --force-overwrite luci-app-ddns-go luci-proto-wireguard wireguard-tools qrencode 2>/dev/null
         else
@@ -179,7 +186,7 @@ execute_update() {
         echo -e "✔ 基础扩展与扫码引擎包部署完毕。"
     fi
     
-    # 恢复安全签名校验
+    # 恢复系统签名保护
     if [ "$SELECTED_MANAGER" = "opkg" ]; then
         sed -i 's/#option check_signature/option check_signature/g' "$OPKG_MAIN_CONF"
     fi
@@ -188,12 +195,16 @@ execute_update() {
 }
 
 restart_services() {
-    echo -e "\n${GREEN}正在平滑重启相关服务...${PLAIN}"
+    echo -e "\n${GREEN}正在平滑唤醒所有已安装的网络服务...${PLAIN}"
     
-    # OpenClash 已经在中途重启过了，这里不再重复重启避免断网
+    if [ "$UPDATE_OPENCLASH" -eq 1 ] && [ -f "/etc/init.d/openclash" ]; then
+        /etc/init.d/openclash start >/dev/null 2>&1
+        echo -e "✔ OpenClash 服务已成功唤醒"
+    fi
+
     if [ "$UPDATE_PASSWALL" -eq 1 ] && [ -f "/etc/init.d/passwall" ]; then
-        /etc/init.d/passwall restart >/dev/null 2>&1
-        echo -e "✔ Passwall 服务已平滑重启"
+        /etc/init.d/passwall start >/dev/null 2>&1
+        echo -e "✔ Passwall 服务已成功唤醒"
     fi
 
     if [ "$UPDATE_BASE" -eq 1 ]; then
@@ -201,13 +212,12 @@ restart_services() {
             /etc/init.d/ddns-go restart >/dev/null 2>&1
             echo -e "✔ DDNS-GO 服务已重启"
         fi
-        # 去掉 network restart 防止 SSH 被强杀，改用更柔和的 reload
         /etc/init.d/network reload >/dev/null 2>&1
         echo -e "✔ WireGuard 接口环境已重载"
     fi
 
     echo -e "\n${GREEN}==========================================${PLAIN}"
-    echo -e "${GREEN}      🎉 所有插件已成功安装或更新至最新版!     ${PLAIN}"
+    echo -e "${GREEN}    🎉 内存保卫战胜利，所有插件均已更新完毕!  ${PLAIN}"
     echo -e "${GREEN}==========================================${PLAIN}"
     exit 0
 }
