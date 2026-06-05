@@ -1,9 +1,9 @@
 #!/bin/sh
 
 # ==========================================
-# OpenWrt 插件官方直连极速追新脚本 (全能扫码版)
-# 包含: OpenClash, Passwall, DDNS-GO, Argon, WireGuard+扫码
-# 特性: 官方直连 / 智能依赖 / 内核保护隔离
+# OpenWrt 插件官方直连极速追新脚本 (防断网自愈版)
+# 包含: OpenClash, Passwall, DDNS-GO, Argon, WireGuard
+# 特性: 防断网机制 / 官方全直连 / 内核保护隔离
 # ==========================================
 
 RED='\033[0;31m'
@@ -21,6 +21,7 @@ ARCH=$(grep "OPENWRT_ARCH" /etc/os-release | awk -F '"' '{print $2}')
 # === 官方 GitHub API 接口 ===
 OC_API="https://api.github.com/repos/vernesong/OpenClash/releases"
 PW_API="https://api.github.com/repos/xiaorouji/openwrt-passwall/releases"
+ARGON_API="https://api.github.com/repos/jerrykuku/luci-theme-argon/releases"
 
 # === 核心依赖与基础插件补给站 ===
 OPKG_REPO="src/gz custom_plugins https://dl.openwrt.ai/latest/packages/${ARCH}/kiddin9"
@@ -68,7 +69,6 @@ execute_update() {
         if ! grep -q "$OPKG_REPO" "$OPKG_CONF" 2>/dev/null; then echo "$OPKG_REPO" >> "$OPKG_CONF"; fi
         sed -i 's/option check_signature/#option check_signature/g' "$OPKG_MAIN_CONF"
         opkg update >/dev/null 2>&1
-        # 原版OpenWrt需要补齐curl和证书包才能访问GitHub API
         opkg install curl ca-bundle ca-certificates 2>/dev/null | grep -Ev "remove_obsolesced_files"
     elif [ "$SELECTED_MANAGER" = "apk" ]; then
         APK_CONF="/etc/apk/repositories"
@@ -94,19 +94,24 @@ execute_update() {
             echo -e "✔ 成功获取官方最新版: ${YELLOW}$(basename "$URL")${PLAIN}"
             wget -qO "$FILE" "$URL"
             if [ "$SELECTED_MANAGER" = "apk" ]; then
-                apk add -u --allow-untrusted --force-overwrite "$FILE" 2>&1 | grep -Ev "remove_obsolesced_files|Failed to determine obsolete files|Couldn't unlink|Not found"
+                apk add -u --allow-untrusted --force-overwrite "$FILE" 2>&1 | grep -Ev "remove_obsolesced_files|Failed to determine obsolete files|Couldn't unlink|Not found|Collected errors"
             else
-                opkg install --force-overwrite --force-checksum "$FILE" 2>&1 | grep -Ev "remove_obsolesced_files|Failed to determine obsolete files|Couldn't unlink|Not found"
+                opkg install --force-overwrite --force-checksum "$FILE" 2>&1 | grep -Ev "remove_obsolesced_files|Failed to determine obsolete files|Couldn't unlink|Not found|Collected errors"
             fi
             rm -f "$FILE"
         else
             echo -e "${YELLOW}⚠️ 尝试从公共源拉取 OpenClash...${PLAIN}"
             if [ "$SELECTED_MANAGER" = "apk" ]; then
-                apk add -u --allow-untrusted --force-overwrite luci-app-openclash
+                apk add -u --allow-untrusted --force-overwrite luci-app-openclash >/dev/null 2>&1
             else
-                opkg install --force-overwrite --force-checksum luci-app-openclash 2>&1 | grep -Ev "remove_obsolesced_files|Failed to determine obsolete files"
+                opkg install --force-overwrite --force-checksum luci-app-openclash >/dev/null 2>&1
             fi
         fi
+
+        # 【核心修复】：防止 OpenClash 升级后断网导致后续下载失败
+        echo -e "${YELLOW}⟳ 正在唤醒 OpenClash 恢复网络连接，请稍候 8 秒...${PLAIN}"
+        /etc/init.d/openclash restart >/dev/null 2>&1
+        sleep 8
     fi
 
     # ---------------- 第三步：更新 Passwall ----------------
@@ -124,17 +129,17 @@ execute_update() {
             echo -e "✔ 成功获取官方最新版: ${YELLOW}$(basename "$URL")${PLAIN}"
             wget -qO "$FILE" "$URL"
             if [ "$SELECTED_MANAGER" = "apk" ]; then
-                apk add -u --allow-untrusted --force-overwrite "$FILE" 2>&1 | grep -Ev "remove_obsolesced_files|Failed to determine obsolete files|Couldn't unlink|Not found"
+                apk add -u --allow-untrusted --force-overwrite "$FILE" 2>&1 | grep -Ev "remove_obsolesced_files|Failed to determine obsolete files|Couldn't unlink|Not found|Collected errors"
             else
-                opkg install --force-overwrite --force-checksum "$FILE" 2>&1 | grep -Ev "remove_obsolesced_files|Failed to determine obsolete files|Couldn't unlink|Not found"
+                opkg install --force-overwrite --force-checksum "$FILE" 2>&1 | grep -Ev "remove_obsolesced_files|Failed to determine obsolete files|Couldn't unlink|Not found|Collected errors"
             fi
             rm -f "$FILE"
         else
             echo -e "${YELLOW}⚠️ 尝试从公共源拉取 Passwall...${PLAIN}"
             if [ "$SELECTED_MANAGER" = "apk" ]; then
-                apk add -u --allow-untrusted --force-overwrite luci-app-passwall
+                apk add -u --allow-untrusted --force-overwrite luci-app-passwall >/dev/null 2>&1
             else
-                opkg install --force-overwrite --force-checksum luci-app-passwall 2>&1 | grep -Ev "remove_obsolesced_files|Failed to determine obsolete files"
+                opkg install --force-overwrite --force-checksum luci-app-passwall >/dev/null 2>&1
             fi
         fi
     fi
@@ -142,14 +147,34 @@ execute_update() {
     # ---------------- 第四步：更新 基础扩展插件 ----------------
     if [ "$UPDATE_BASE" -eq 1 ]; then
         echo -e "\n${GREEN}[4/4] 正在安装 DDNS-GO, Argon主题, WireGuard + 二维码扫码引擎...${PLAIN}"
-        echo -e "${YELLOW}*(注: WireGuard将智能切换至官方系统源进行安全拉取，防止内核冲突)*${PLAIN}"
         
+        # 1. 官方直连拉取 Argon 主题 (避开第三方源的架构冲突)
+        echo -e "✔ 正在从原作者 GitHub 拉取 Argon 主题..."
         if [ "$SELECTED_MANAGER" = "apk" ]; then
-            apk add -u --allow-untrusted --force-overwrite luci-theme-argon luci-app-argon-config luci-app-ddns-go luci-proto-wireguard wireguard-tools qrencode 2>&1
+            ARGON_URL=$(get_latest_github_url "$ARGON_API" "https://[^\"]*luci-theme-argon[^\"]*\.apk")
+            ARGON_FILE="/tmp/argon.apk"
         else
-            # 使用标准的安装命令（非强制校验），确保内核模块能顺畅匹配官方源，并同步安装 qrencode 引擎
-            opkg install luci-theme-argon luci-app-argon-config luci-app-ddns-go luci-proto-wireguard wireguard-tools qrencode 2>&1 | grep -Ev "remove_obsolesced_files"
-            opkg upgrade luci-theme-argon luci-app-argon-config luci-app-ddns-go luci-proto-wireguard wireguard-tools qrencode 2>/dev/null | grep -Ev "remove_obsolesced_files"
+            ARGON_URL=$(get_latest_github_url "$ARGON_API" "https://[^\"]*luci-theme-argon[^\"]*_all\.ipk")
+            ARGON_FILE="/tmp/argon.ipk"
+        fi
+        
+        if [ -n "$ARGON_URL" ]; then
+            wget -qO "$ARGON_FILE" "$ARGON_URL"
+            if [ "$SELECTED_MANAGER" = "apk" ]; then
+                apk add -u --allow-untrusted --force-overwrite "$ARGON_FILE" >/dev/null 2>&1
+            else
+                opkg install --force-depends --force-overwrite "$ARGON_FILE" >/dev/null 2>&1
+            fi
+            rm -f "$ARGON_FILE"
+        fi
+
+        # 2. 从官方/公共源安全拉取 DDNS-GO 和 WireGuard
+        echo -e "${YELLOW}*(注: WireGuard将智能切换至官方系统源拉取，防止内核冲突)*${PLAIN}"
+        if [ "$SELECTED_MANAGER" = "apk" ]; then
+            apk add -u --allow-untrusted --force-overwrite luci-app-ddns-go luci-proto-wireguard wireguard-tools qrencode 2>/dev/null
+        else
+            opkg install luci-app-ddns-go luci-proto-wireguard wireguard-tools qrencode 2>/dev/null | grep -Ev "remove_obsolesced_files|Collected errors"
+            opkg upgrade luci-app-ddns-go luci-proto-wireguard wireguard-tools qrencode 2>/dev/null | grep -Ev "remove_obsolesced_files|Collected errors"
         fi
         echo -e "✔ 基础扩展与扫码引擎包部署完毕。"
     fi
@@ -165,20 +190,20 @@ execute_update() {
 restart_services() {
     echo -e "\n${GREEN}正在平滑重启相关服务...${PLAIN}"
     
-    if [ "$UPDATE_OPENCLASH" -eq 1 ] && [ -f "/etc/init.d/openclash" ]; then
-        /etc/init.d/openclash restart >/dev/null 2>&1
-        echo -e "✔ OpenClash 服务已重启"
-    fi
-
+    # OpenClash 已经在中途重启过了，这里不再重复重启避免断网
     if [ "$UPDATE_PASSWALL" -eq 1 ] && [ -f "/etc/init.d/passwall" ]; then
         /etc/init.d/passwall restart >/dev/null 2>&1
-        echo -e "✔ Passwall 服务已重启"
+        echo -e "✔ Passwall 服务已平滑重启"
     fi
 
-    if [ "$UPDATE_BASE" -eq 1 ] && [ -f "/etc/init.d/ddns-go" ]; then
-        /etc/init.d/ddns-go restart >/dev/null 2>&1
-        /etc/init.d/network restart >/dev/null 2>&1
-        echo -e "✔ DDNS-GO 及 Network(WireGuard) 服务已重启"
+    if [ "$UPDATE_BASE" -eq 1 ]; then
+        if [ -f "/etc/init.d/ddns-go" ]; then
+            /etc/init.d/ddns-go restart >/dev/null 2>&1
+            echo -e "✔ DDNS-GO 服务已重启"
+        fi
+        # 去掉 network restart 防止 SSH 被强杀，改用更柔和的 reload
+        /etc/init.d/network reload >/dev/null 2>&1
+        echo -e "✔ WireGuard 接口环境已重载"
     fi
 
     echo -e "\n${GREEN}==========================================${PLAIN}"
