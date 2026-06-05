@@ -6,7 +6,9 @@
 以后无论您面对的是哪台 OpenWrt，或者是哪个版本的固件，只需要通过 SSH 登录到软路由后台，直接复制并执行下面这行命令即可（请替换为您自己的脚本链接）：
 
 Bash
-sh -c "$(curl -kLs https://github.com/JBl9527/update_plugins.sh/blob/main/update_plugins.sh)"
+
+sh -c "$(curl -kLs https://raw.githubusercontent.com/JBl9527/update_plugins.sh/main/update_plugins.sh)"
+
 (注：加入了 -k 参数是为了防止某些老旧软路由的 SSL 证书过期导致 curl 下载脚本失败。)
 
 🎛️ 第二步：交互菜单详解
