@@ -45,3 +45,13 @@ Q2：如果我只选了更新 OpenClash，Passwall 会重启断网吗？
 
 Q3：源添加过一次，第二次跑脚本会重复添加导致配置文件爆炸吗？
 不会的。脚本内置了 grep -q 去重判定逻辑。在向 customfeeds.conf 或 repositories 写入源地址前，它会先扫描里面是不是已经有这行代码了，如果有，它会直接跳过写入步骤，绝对保持系统的纯净。
+
+🟢 情况一：软路由已经能科学上网（直连 GitHub）
+直接复制这行执行：
+sh -c "$(curl -kLs https://raw.githubusercontent.com/JBl9527/update_plugins.sh/main/update_plugins.sh)"
+
+
+🔴 情况二：软路由在国内纯净网络（无法直连 GitHub）
+利用国内的 Ghproxy 镜像加速代理，直接复制这行执行：
+
+sh -c "$(curl -kLs https://mirror.ghproxy.com/https://raw.githubusercontent.com/JBl9527/update_plugins.sh/main/update_plugins.sh)"
