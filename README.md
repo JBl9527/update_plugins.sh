@@ -1,24 +1,15 @@
 🚀 OpenWrt 核心插件智能更新脚本说明书
 这份脚本专门为解决 OpenWrt 跨版本（23.xx 的 opkg 与 24.10+ 的 apk）软件源不兼容、更新繁琐的问题而生。
 
-🛠️ 第一步：修改与上传 (部署准备)
-在将脚本投入使用前，您需要对源码进行简单的路径替换：
 
-打开源码配置区：找到脚本第 16 行到 23 行的 配置区。
-
-替换为您自己的仓库链接：
-将里面的 https://raw.githubusercontent.com/你的用户名/你的仓库/... 替换为您存放在 GitHub 上的真实插件（.ipk 或 .apk）目录的 Raw 链接。
-
-推送到 GitHub：将修改好的 update_plugins.sh 上传到您自己的 GitHub 仓库中，并获取它的 Raw 直链（例如：https://raw.githubusercontent.com/用户名/仓库名/main/update_plugins.sh）。
-
-💻 第二步：在软路由上一键执行
+💻 第一步：在软路由上一键执行
 以后无论您面对的是哪台 OpenWrt，或者是哪个版本的固件，只需要通过 SSH 登录到软路由后台，直接复制并执行下面这行命令即可（请替换为您自己的脚本链接）：
 
 Bash
 sh -c "$(curl -kLs https://github.com/JBl9527/update_plugins.sh/blob/main/update_plugins.sh)"
 (注：加入了 -k 参数是为了防止某些老旧软路由的 SSL 证书过期导致 curl 下载脚本失败。)
 
-🎛️ 第三步：交互菜单详解
+🎛️ 第二步：交互菜单详解
 执行命令后，脚本会弹出两级交互菜单，完全傻瓜式操作：
 
 🟢 第一级：系统架构探测菜单
@@ -43,7 +34,7 @@ sh -c "$(curl -kLs https://github.com/JBl9527/update_plugins.sh/blob/main/update
 
 选择完毕后，脚本将自动完成：写源 -> 更新软件列表 -> 下载升级插件 -> 重启对应服务 的全自动流水线。
 
-🚑 第四步：极客避坑指南 (FAQ)
+🚑 第三步：极客避坑指南 (FAQ)
 Q1：新版 24.10 的 apk 模式下，为什么会有个 --allow-untrusted 参数？
 新版的 Alpine 包管理器对安全性要求极高，默认必须有公钥签名的源才能安装。因为我们使用的是 GitHub 个人仓库作为软件源（通常没有配置复杂的签名校验），加上这个参数可以强行绕过验证直接安装，防止报错阻断。
 
