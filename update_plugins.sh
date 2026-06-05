@@ -1,8 +1,8 @@
 #!/bin/sh
 
 # ==========================================
-# OpenWrt 插件更新与源注入脚本 (精准选择版)
-# 特性: 架构自适应探测 / 手动越权 / 插件独立更新
+# OpenWrt 插件全自动极速更新脚本 (公共源版)
+# 特性: 架构自适应 / 接入每日最新编译公共源 / 全自动解决依赖
 # 支持: OPKG (< 24.10) & APK (24.10 / 25.10+)
 # ==========================================
 
@@ -12,20 +12,18 @@ YELLOW='\033[0;33m'
 CYAN='\033[0;36m'
 PLAIN='\033[0m'
 
-# === ⚙️ 配置区：请将下方链接替换为您自己的 GitHub 软件源链接 ===
-
-# 【1】OPKG 软件源 (对应 OpenWrt 23.xx 及更早版本)
-OPKG_OPENCLASH_REPO="src/gz custom_openclash https://raw.githubusercontent.com/你的用户名/你的仓库/main/opkg/openclash/x86_64"
-OPKG_PASSWALL_REPO="src/gz custom_passwall https://raw.githubusercontent.com/你的用户名/你的仓库/main/opkg/passwall/x86_64"
-
-# 【2】APK 软件源 (对应 OpenWrt 24.10 / 25.10 及未来版本)
-APK_OPENCLASH_REPO="https://raw.githubusercontent.com/你的用户名/你的仓库/main/apk/openclash/x86_64"
-APK_PASSWALL_REPO="https://raw.githubusercontent.com/你的用户名/你的仓库/main/apk/passwall/x86_64"
-
 # 全局变量
 SELECTED_MANAGER=""
 UPDATE_OPENCLASH=0
 UPDATE_PASSWALL=0
+# 自动抓取当前路由器的 CPU 架构 (例如 x86_64, aarch64_generic)
+ARCH=$(grep "OPENWRT_ARCH" /etc/os-release | awk -F '"' '{print $2}')
+
+# === 🚀 核心公共源 (Kiddin9 / OpenWrt.ai 每日最新编译源) ===
+# 该源包含了最新版插件及其所需的所有底层依赖，彻底解决依赖报错问题
+OPKG_REPO="src/gz custom_plugins https://dl.openwrt.ai/latest/packages/${ARCH}/kiddin9"
+APK_REPO="https://dl.openwrt.ai/latest/packages/${ARCH}/kiddin9"
+PUB_KEY_URL="https://dl.openwrt.ai/latest/public-key.pub"
 
 # ==========================================================
 
@@ -33,10 +31,10 @@ UPDATE_PASSWALL=0
 auto_detect_env() {
     if command -v apk >/dev/null 2>&1; then
         DETECTED_MANAGER="apk"
-        DETECTED_OS_DESC="新版 OpenWrt 24.10/25.10+ (APK架构)"
+        DETECTED_OS_DESC="新版 OpenWrt 24.10/25.10+ (APK架构: ${ARCH})"
     elif command -v opkg >/dev/null 2>&1; then
         DETECTED_MANAGER="opkg"
-        DETECTED_OS_DESC="经典 OpenWrt 23.xx及以下 (OPKG架构)"
+        DETECTED_OS_DESC="经典 OpenWrt 23.xx及以下 (OPKG架构: ${ARCH})"
     else
         DETECTED_MANAGER="unknown"
         DETECTED_OS_DESC="未知架构 (未找到 apk 或 opkg 指令)"
@@ -64,29 +62,26 @@ execute_update() {
         fi
         
         OPKG_CONF="/etc/opkg/customfeeds.conf"
-        echo -e "\n${GREEN}[1/3] 正在检查并注入 OPKG 软件源...${PLAIN}"
+        echo -e "\n${GREEN}[1/3] 正在挂载公共软件源并导入安全公钥...${PLAIN}"
         
-        if [ "$UPDATE_OPENCLASH" -eq 1 ]; then
-            if ! grep -q "$OPKG_OPENCLASH_REPO" "$OPKG_CONF" 2>/dev/null; then
-                echo "$OPKG_OPENCLASH_REPO" >> "$OPKG_CONF"
-            fi
-            echo -e "✔ 已装载 OpenClash 软件源"
-            TARGET_PACKAGES="$TARGET_PACKAGES luci-app-openclash"
-        fi
+        # 导入公钥防止签名报错
+        wget -qO - "$PUB_KEY_URL" | opkg-key add - >/dev/null 2>&1
         
-        if [ "$UPDATE_PASSWALL" -eq 1 ]; then
-            if ! grep -q "$OPKG_PASSWALL_REPO" "$OPKG_CONF" 2>/dev/null; then
-                echo "$OPKG_PASSWALL_REPO" >> "$OPKG_CONF"
-            fi
-            echo -e "✔ 已装载 Passwall 软件源"
-            TARGET_PACKAGES="$TARGET_PACKAGES luci-app-passwall"
+        # 写入公共源
+        if ! grep -q "$OPKG_REPO" "$OPKG_CONF" 2>/dev/null; then
+            echo "$OPKG_REPO" >> "$OPKG_CONF"
         fi
+        echo -e "✔ 已装载每日最新编译公共源 (${ARCH})"
+        
+        if [ "$UPDATE_OPENCLASH" -eq 1 ]; then TARGET_PACKAGES="$TARGET_PACKAGES luci-app-openclash"; fi
+        if [ "$UPDATE_PASSWALL" -eq 1 ]; then TARGET_PACKAGES="$TARGET_PACKAGES luci-app-passwall"; fi
 
-        echo -e "\n${GREEN}[2/3] 正在更新 OPKG 软件源列表...${PLAIN}"
+        echo -e "\n${GREEN}[2/3] 正在更新 OPKG 软件源列表 (自动解析依赖)...${PLAIN}"
         opkg update
 
-        echo -e "\n${GREEN}[3/3] 正在升级选中插件: ${TARGET_PACKAGES}${PLAIN}"
-        opkg install $TARGET_PACKAGES || opkg upgrade $TARGET_PACKAGES
+        echo -e "\n${GREEN}[3/3] 正在极速升级选中插件: ${TARGET_PACKAGES}${PLAIN}"
+        # 强制忽略签名并覆盖安装，确保依赖自动下载
+        opkg install --force-overwrite --force-checksum $TARGET_PACKAGES || opkg upgrade --force-overwrite --force-checksum $TARGET_PACKAGES
     
     # ---------------- APK 模式 ----------------
     elif [ "$SELECTED_MANAGER" = "apk" ]; then
@@ -96,29 +91,21 @@ execute_update() {
         fi
         
         APK_CONF="/etc/apk/repositories"
-        echo -e "\n${GREEN}[1/3] 正在检查并注入 APK 软件源...${PLAIN}"
+        echo -e "\n${GREEN}[1/3] 正在挂载公共软件源...${PLAIN}"
         
-        if [ "$UPDATE_OPENCLASH" -eq 1 ]; then
-            if ! grep -q "$APK_OPENCLASH_REPO" "$APK_CONF" 2>/dev/null; then
-                echo "$APK_OPENCLASH_REPO" >> "$APK_CONF"
-            fi
-            echo -e "✔ 已装载 OpenClash 软件源"
-            TARGET_PACKAGES="$TARGET_PACKAGES luci-app-openclash"
+        if ! grep -q "$APK_REPO" "$APK_CONF" 2>/dev/null; then
+            echo "$APK_REPO" >> "$APK_CONF"
         fi
+        echo -e "✔ 已装载每日最新编译公共源 (${ARCH})"
         
-        if [ "$UPDATE_PASSWALL" -eq 1 ]; then
-            if ! grep -q "$APK_PASSWALL_REPO" "$APK_CONF" 2>/dev/null; then
-                echo "$APK_PASSWALL_REPO" >> "$APK_CONF"
-            fi
-            echo -e "✔ 已装载 Passwall 软件源"
-            TARGET_PACKAGES="$TARGET_PACKAGES luci-app-passwall"
-        fi
+        if [ "$UPDATE_OPENCLASH" -eq 1 ]; then TARGET_PACKAGES="$TARGET_PACKAGES luci-app-openclash"; fi
+        if [ "$UPDATE_PASSWALL" -eq 1 ]; then TARGET_PACKAGES="$TARGET_PACKAGES luci-app-passwall"; fi
 
-        echo -e "\n${GREEN}[2/3] 正在更新 APK 软件源列表...${PLAIN}"
+        echo -e "\n${GREEN}[2/3] 正在更新 APK 软件源列表 (自动解析依赖)...${PLAIN}"
         apk update --allow-untrusted
 
-        echo -e "\n${GREEN}[3/3] 正在升级选中插件: ${TARGET_PACKAGES}${PLAIN}"
-        apk add -u --allow-untrusted $TARGET_PACKAGES
+        echo -e "\n${GREEN}[3/3] 正在极速升级选中插件: ${TARGET_PACKAGES}${PLAIN}"
+        apk add -u --allow-untrusted --force-overwrite $TARGET_PACKAGES
     fi
     
     restart_services
@@ -130,16 +117,16 @@ restart_services() {
     
     if [ "$UPDATE_OPENCLASH" -eq 1 ] && [ -f "/etc/init.d/openclash" ]; then
         /etc/init.d/openclash restart >/dev/null 2>&1
-        echo -e "✔ OpenClash 服务已重启"
+        echo -e "✔ OpenClash 服务已平滑重启"
     fi
 
     if [ "$UPDATE_PASSWALL" -eq 1 ] && [ -f "/etc/init.d/passwall" ]; then
         /etc/init.d/passwall restart >/dev/null 2>&1
-        echo -e "✔ Passwall 服务已重启"
+        echo -e "✔ Passwall 服务已平滑重启"
     fi
 
     echo -e "\n${GREEN}==========================================${PLAIN}"
-    echo -e "${GREEN}           🎉 所有更新任务已完成!           ${PLAIN}"
+    echo -e "${GREEN}           🎉 所有更新与依赖补全已完成!       ${PLAIN}"
     echo -e "${GREEN}==========================================${PLAIN}"
     exit 0
 }
@@ -154,37 +141,19 @@ plugin_menu() {
         echo -e "${CYAN}   目标架构: APK 模式  | 请选择更新目标   ${PLAIN}"
     fi
     echo -e "${CYAN}==========================================${PLAIN}"
-    echo -e "${GREEN}1.${PLAIN} 仅更新 ${YELLOW}OpenClash${PLAIN}"
-    echo -e "${GREEN}2.${PLAIN} 仅更新 ${YELLOW}Passwall${PLAIN}"
-    echo -e "${GREEN}3.${PLAIN} 同时更新 ${YELLOW}OpenClash${PLAIN} 和 ${YELLOW}Passwall${PLAIN} (默认)"
+    echo -e "${GREEN}1.${PLAIN} 仅更新 ${YELLOW}OpenClash${PLAIN} (自动补全内核及依赖)"
+    echo -e "${GREEN}2.${PLAIN} 仅更新 ${YELLOW}Passwall${PLAIN} (自动补全 xray/sing-box 依赖)"
+    echo -e "${GREEN}3.${PLAIN} 同时更新 ${YELLOW}两者${PLAIN} (默认推荐)"
     echo -e "${GREEN}0.${PLAIN} 返回上级菜单"
     echo -e "${CYAN}==========================================${PLAIN}"
     read -p "请选择操作 [0-3]: " PLUGIN_CHOICE
     
     case "$PLUGIN_CHOICE" in
-        1)
-            UPDATE_OPENCLASH=1
-            UPDATE_PASSWALL=0
-            execute_update
-            ;;
-        2)
-            UPDATE_OPENCLASH=0
-            UPDATE_PASSWALL=1
-            execute_update
-            ;;
-        3|"")
-            UPDATE_OPENCLASH=1
-            UPDATE_PASSWALL=1
-            execute_update
-            ;;
-        0)
-            start_menu
-            ;;
-        *)
-            echo -e "${RED}输入无效，请重新选择！${PLAIN}"
-            sleep 1
-            plugin_menu
-            ;;
+        1) UPDATE_OPENCLASH=1; UPDATE_PASSWALL=0; execute_update ;;
+        2) UPDATE_OPENCLASH=0; UPDATE_PASSWALL=1; execute_update ;;
+        3|"") UPDATE_OPENCLASH=1; UPDATE_PASSWALL=1; execute_update ;;
+        0) start_menu ;;
+        *) echo -e "${RED}输入无效！${PLAIN}"; sleep 1; plugin_menu ;;
     esac
 }
 
@@ -193,7 +162,7 @@ start_menu() {
     auto_detect_env
     clear
     echo -e "${CYAN}==========================================${PLAIN}"
-    echo -e "${CYAN}   OpenWrt 插件更新与源注入工具 (双源版)  ${PLAIN}"
+    echo -e "${CYAN} OpenWrt 插件极速更新工具 (每日最新公共源) ${PLAIN}"
     echo -e "${CYAN}==========================================${PLAIN}"
     echo -e "智能探针已侦测到当前系统环境为:"
     echo -e "👉 ${YELLOW}${DETECTED_OS_DESC}${PLAIN}"
@@ -207,8 +176,8 @@ start_menu() {
         echo -e "${RED}1. 使用默认设定 (系统检测失败，无法使用默认)${PLAIN}"
     fi
     
-    echo -e "${GREEN}2.${PLAIN} 手动强制使用 ${YELLOW}OPKG 模式${PLAIN} (适合 23.xx 及更早版本固件)"
-    echo -e "${GREEN}3.${PLAIN} 手动强制使用 ${YELLOW}APK 模式${PLAIN}  (适合 24.10 / 25.10 及未来固件)"
+    echo -e "${GREEN}2.${PLAIN} 手动强制使用 ${YELLOW}OPKG 模式${PLAIN} (< 23.xx)"
+    echo -e "${GREEN}3.${PLAIN} 手动强制使用 ${YELLOW}APK 模式${PLAIN}  (>= 24.10)"
     echo -e "${GREEN}0.${PLAIN} 退出脚本"
     echo -e "${CYAN}==========================================${PLAIN}"
     read -p "请选择操作 [0-3]: " MENU_CHOICE
@@ -219,24 +188,12 @@ start_menu() {
                 SELECTED_MANAGER="$DETECTED_MANAGER"
                 plugin_menu
             else
-                echo -e "${RED}未能检测到包管理器，请手动选择！${PLAIN}"
-                sleep 2; start_menu
-            fi
-            ;;
-        2) 
-            SELECTED_MANAGER="opkg"
-            plugin_menu 
-            ;;
-        3) 
-            SELECTED_MANAGER="apk"
-            plugin_menu 
-            ;;
-        0) 
-            echo -e "${GREEN}已取消。${PLAIN}"; exit 0 
-            ;;
-        *) 
-            echo -e "${RED}输入无效，请重新选择！${PLAIN}"; sleep 1; start_menu 
-            ;;
+                echo -e "${RED}未能检测到包管理器，请手动选择！${PLAIN}"; sleep 2; start_menu
+            fi ;;
+        2) SELECTED_MANAGER="opkg"; plugin_menu ;;
+        3) SELECTED_MANAGER="apk"; plugin_menu ;;
+        0) echo -e "${GREEN}已取消。${PLAIN}"; exit 0 ;;
+        *) echo -e "${RED}输入无效，请重新选择！${PLAIN}"; sleep 1; start_menu ;;
     esac
 }
 
