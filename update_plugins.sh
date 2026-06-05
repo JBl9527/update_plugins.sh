@@ -1,8 +1,8 @@
 #!/bin/sh
 
 # ==========================================
-# OpenWrt 插件全自动极速更新脚本 (公共源版)
-# 特性: 架构自适应 / 接入每日最新编译公共源 / 全自动解决依赖
+# OpenWrt 插件全自动极速更新脚本 (终极除错版)
+# 特性: 清理废弃死链 / 绕过无签名源 / 全自动解决依赖
 # 支持: OPKG (< 24.10) & APK (24.10 / 25.10+)
 # ==========================================
 
@@ -12,22 +12,18 @@ YELLOW='\033[0;33m'
 CYAN='\033[0;36m'
 PLAIN='\033[0m'
 
-# 全局变量
 SELECTED_MANAGER=""
 UPDATE_OPENCLASH=0
 UPDATE_PASSWALL=0
-# 自动抓取当前路由器的 CPU 架构 (例如 x86_64, aarch64_generic)
+# 获取 CPU 架构
 ARCH=$(grep "OPENWRT_ARCH" /etc/os-release | awk -F '"' '{print $2}')
 
-# === 🚀 核心公共源 (Kiddin9 / OpenWrt.ai 每日最新编译源) ===
-# 该源包含了最新版插件及其所需的所有底层依赖，彻底解决依赖报错问题
+# === 🚀 核心公共源 (Kiddin9 / OpenWrt.ai) ===
 OPKG_REPO="src/gz custom_plugins https://dl.openwrt.ai/latest/packages/${ARCH}/kiddin9"
 APK_REPO="https://dl.openwrt.ai/latest/packages/${ARCH}/kiddin9"
-PUB_KEY_URL="https://dl.openwrt.ai/latest/public-key.pub"
 
 # ==========================================================
 
-# 1. 智能探测当前系统包管理器
 auto_detect_env() {
     if command -v apk >/dev/null 2>&1; then
         DETECTED_MANAGER="apk"
@@ -37,11 +33,10 @@ auto_detect_env() {
         DETECTED_OS_DESC="经典 OpenWrt 23.xx及以下 (OPKG架构: ${ARCH})"
     else
         DETECTED_MANAGER="unknown"
-        DETECTED_OS_DESC="未知架构 (未找到 apk 或 opkg 指令)"
+        DETECTED_OS_DESC="未知架构"
     fi
 }
 
-# 4. 执行更新逻辑核心
 execute_update() {
     clear
     echo -e "${CYAN}==========================================${PLAIN}"
@@ -56,52 +51,50 @@ execute_update() {
 
     # ---------------- OPKG 模式 ----------------
     if [ "$SELECTED_MANAGER" = "opkg" ]; then
-        if ! command -v opkg >/dev/null 2>&1; then
-            echo -e "${RED}致命错误: 当前系统不存在 opkg 命令！强制运行失败。${PLAIN}"
-            exit 1
-        fi
-        
         OPKG_CONF="/etc/opkg/customfeeds.conf"
-        echo -e "\n${GREEN}[1/3] 正在挂载公共软件源并导入安全公钥...${PLAIN}"
+        OPKG_MAIN_CONF="/etc/opkg.conf"
         
-        # 导入公钥防止签名报错
-        wget -qO - "$PUB_KEY_URL" | opkg-key add - >/dev/null 2>&1
+        echo -e "\n${GREEN}[1/3] 正在清理历史死链并挂载最新源...${PLAIN}"
+        # 1. 暴力清除以前脚本残留的假链接
+        sed -i '/你的用户名/d' "$OPKG_CONF" 2>/dev/null
         
-        # 写入公共源
+        # 2. 写入最新的 kiddin9 源
         if ! grep -q "$OPKG_REPO" "$OPKG_CONF" 2>/dev/null; then
             echo "$OPKG_REPO" >> "$OPKG_CONF"
         fi
-        echo -e "✔ 已装载每日最新编译公共源 (${ARCH})"
         
         if [ "$UPDATE_OPENCLASH" -eq 1 ]; then TARGET_PACKAGES="$TARGET_PACKAGES luci-app-openclash"; fi
         if [ "$UPDATE_PASSWALL" -eq 1 ]; then TARGET_PACKAGES="$TARGET_PACKAGES luci-app-passwall"; fi
 
-        echo -e "\n${GREEN}[2/3] 正在更新 OPKG 软件源列表 (自动解析依赖)...${PLAIN}"
+        echo -e "\n${GREEN}[2/3] 正在绕过签名验证并更新软件源列表...${PLAIN}"
+        # 临时注释掉 opkg.conf 里的签名强制校验，防止 kiddin9 无签名报错
+        sed -i 's/option check_signature/#option check_signature/g' "$OPKG_MAIN_CONF"
+        
         opkg update
 
         echo -e "\n${GREEN}[3/3] 正在极速升级选中插件: ${TARGET_PACKAGES}${PLAIN}"
-        # 强制忽略签名并覆盖安装，确保依赖自动下载
         opkg install --force-overwrite --force-checksum $TARGET_PACKAGES || opkg upgrade --force-overwrite --force-checksum $TARGET_PACKAGES
+        
+        # 恢复系统的安全签名校验，保证系统日后安全
+        sed -i 's/#option check_signature/option check_signature/g' "$OPKG_MAIN_CONF"
     
     # ---------------- APK 模式 ----------------
     elif [ "$SELECTED_MANAGER" = "apk" ]; then
-        if ! command -v apk >/dev/null 2>&1; then
-            echo -e "${RED}致命错误: 当前系统不存在 apk 命令！强制运行失败。${PLAIN}"
-            exit 1
-        fi
-        
         APK_CONF="/etc/apk/repositories"
-        echo -e "\n${GREEN}[1/3] 正在挂载公共软件源...${PLAIN}"
         
+        echo -e "\n${GREEN}[1/3] 正在清理历史死链并挂载最新源...${PLAIN}"
+        # 1. 暴力清除以前脚本残留的假链接
+        sed -i '/你的用户名/d' "$APK_CONF" 2>/dev/null
+        
+        # 2. 写入最新的 kiddin9 源
         if ! grep -q "$APK_REPO" "$APK_CONF" 2>/dev/null; then
             echo "$APK_REPO" >> "$APK_CONF"
         fi
-        echo -e "✔ 已装载每日最新编译公共源 (${ARCH})"
         
         if [ "$UPDATE_OPENCLASH" -eq 1 ]; then TARGET_PACKAGES="$TARGET_PACKAGES luci-app-openclash"; fi
         if [ "$UPDATE_PASSWALL" -eq 1 ]; then TARGET_PACKAGES="$TARGET_PACKAGES luci-app-passwall"; fi
 
-        echo -e "\n${GREEN}[2/3] 正在更新 APK 软件源列表 (自动解析依赖)...${PLAIN}"
+        echo -e "\n${GREEN}[2/3] 正在更新 APK 软件源列表...${PLAIN}"
         apk update --allow-untrusted
 
         echo -e "\n${GREEN}[3/3] 正在极速升级选中插件: ${TARGET_PACKAGES}${PLAIN}"
@@ -111,7 +104,6 @@ execute_update() {
     restart_services
 }
 
-# 5. 重启相关服务
 restart_services() {
     echo -e "\n${GREEN}正在重启相关服务以应用新版本核心...${PLAIN}"
     
@@ -126,12 +118,11 @@ restart_services() {
     fi
 
     echo -e "\n${GREEN}==========================================${PLAIN}"
-    echo -e "${GREEN}           🎉 所有更新与依赖补全已完成!       ${PLAIN}"
+    echo -e "${GREEN}         🎉 垃圾已清理，所有更新已完成!         ${PLAIN}"
     echo -e "${GREEN}==========================================${PLAIN}"
     exit 0
 }
 
-# 3. 插件选择菜单
 plugin_menu() {
     clear
     echo -e "${CYAN}==========================================${PLAIN}"
@@ -141,8 +132,8 @@ plugin_menu() {
         echo -e "${CYAN}   目标架构: APK 模式  | 请选择更新目标   ${PLAIN}"
     fi
     echo -e "${CYAN}==========================================${PLAIN}"
-    echo -e "${GREEN}1.${PLAIN} 仅更新 ${YELLOW}OpenClash${PLAIN} (自动补全内核及依赖)"
-    echo -e "${GREEN}2.${PLAIN} 仅更新 ${YELLOW}Passwall${PLAIN} (自动补全 xray/sing-box 依赖)"
+    echo -e "${GREEN}1.${PLAIN} 仅更新 ${YELLOW}OpenClash${PLAIN}"
+    echo -e "${GREEN}2.${PLAIN} 仅更新 ${YELLOW}Passwall${PLAIN}"
     echo -e "${GREEN}3.${PLAIN} 同时更新 ${YELLOW}两者${PLAIN} (默认推荐)"
     echo -e "${GREEN}0.${PLAIN} 返回上级菜单"
     echo -e "${CYAN}==========================================${PLAIN}"
@@ -157,12 +148,11 @@ plugin_menu() {
     esac
 }
 
-# 2. 初始架构交互菜单
 start_menu() {
     auto_detect_env
     clear
     echo -e "${CYAN}==========================================${PLAIN}"
-    echo -e "${CYAN} OpenWrt 插件极速更新工具 (每日最新公共源) ${PLAIN}"
+    echo -e "${CYAN} OpenWrt 插件极速更新工具 (防报错智能版)   ${PLAIN}"
     echo -e "${CYAN}==========================================${PLAIN}"
     echo -e "智能探针已侦测到当前系统环境为:"
     echo -e "👉 ${YELLOW}${DETECTED_OS_DESC}${PLAIN}"
@@ -197,5 +187,4 @@ start_menu() {
     esac
 }
 
-# 脚本入口
 start_menu
