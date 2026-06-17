@@ -3,6 +3,7 @@
 # ==========================================
 # OpenWrt/ImmortalWrt 24.10+ 永久加源直装脚本
 # 特性: 开启256M虚拟内存防Killed / 永久写入三方源 / 自动补全汉化依赖
+# 增强: 集成 OpenClash, Passwall, DAED, DDNS-GO 等核心插件
 # 支持: OPKG 架构完美适配
 # ==========================================
 
@@ -15,10 +16,11 @@ PLAIN='\033[0m'
 SELECTED_MANAGER=""
 UPDATE_OPENCLASH=0
 UPDATE_PASSWALL=0
+UPDATE_DAED=0
 UPDATE_BASE=0
 ARCH=$(grep "OPENWRT_ARCH" /etc/os-release | awk -F '"' '{print $2}')
 
-# === 永久注入的核心追新公共源 (包含DDNS-GO、OpenClash、Passwall及万个全套依赖) ===
+# === 永久注入的核心追新公共源 (包含DDNS-GO、OpenClash、Passwall、DAED及万个全套依赖) ===
 OPKG_REPO="src/gz custom_plugins https://dl.openwrt.ai/latest/packages/${ARCH}/kiddin9"
 PUB_KEY_URL="https://dl.openwrt.ai/latest/public-key.pub"
 
@@ -40,7 +42,7 @@ execute_update() {
     echo -e "${CYAN}==========================================${PLAIN}"
     
     # ---------------- 第 0 步：挂载 256MB 虚拟内存 (彻底根除 Killed 闪退) ----------------
-    echo -e "\n${YELLOW}[0/4] 正在利用 1.32G 闲置磁盘临时构建 256MB 虚拟内存保障库...${PLAIN}"
+    echo -e "\n${YELLOW}[0/4] 正在利用闲置磁盘临时构建 256MB 虚拟内存保障库...${PLAIN}"
     # 强杀之前可能存在的死锁
     rm -f /var/lock/opkg.lock
     swapoff /root/swapfile >/dev/null 2>&1
@@ -85,11 +87,15 @@ execute_update() {
     echo -e "✔ 软件源列表全部同步完毕！"
 
     # ---------------- 第 3 步：一网打尽安装核心全家桶 (顺藤摸瓜自动解决所有依赖) ----------------
-    echo -e "\n${GREEN}[3/4] 正在长驱直入安装/更新选中插件及全套汉化组件...${PLAIN}"
+    echo -e "\n${GREEN}[3/4] 正在长驱直入安装/更新选中插件及全套底层依赖...${PLAIN}"
     
     TARGET_PACKAGES=""
     [ "$UPDATE_OPENCLASH" -eq 1 ] && TARGET_PACKAGES="$TARGET_PACKAGES luci-app-openclash"
     [ "$UPDATE_PASSWALL" -eq 1 ] && TARGET_PACKAGES="$TARGET_PACKAGES luci-app-passwall"
+    
+    # 新增：加入 DAED 及其核心组件
+    [ "$UPDATE_DAED" -eq 1 ] && TARGET_PACKAGES="$TARGET_PACKAGES luci-app-daed daed"
+    
     if [ "$UPDATE_BASE" -eq 1 ]; then
         # 一口气补齐：DDNS-GO本体、官方中文语言包、Argon主题、Argon配置面板、WireGuard组件、qrencode扫码引擎、新版UI必备的luci-compat兼容层
         TARGET_PACKAGES="$TARGET_PACKAGES luci-app-ddns-go luci-i18n-ddns-go-zh-cn luci-theme-argon luci-app-argon-config luci-proto-wireguard wireguard-tools qrencode luci-compat"
@@ -100,7 +106,7 @@ execute_update() {
         # 覆盖安装，解决所有残留依赖阻断
         opkg install --force-overwrite --force-checksum $TARGET_PACKAGES 2>&1 | grep -Ev "remove_obsolesced_files|Failed to determine obsolete files|Couldn't unlink"
         opkg upgrade --force-overwrite --force-checksum $TARGET_PACKAGES 2>/dev/null | grep -Ev "remove_obsolesced_files"
-        echo -e "✔ 所有插件及其关联的底层依赖、汉化包已全部装妥！"
+        echo -e "✔ 所有插件及其关联的底层核心依赖、汉化包已全部装妥！"
     fi
 
     # ---------------- 第 4 步：卸载虚拟内存，恢复纯净磁盘 ----------------
@@ -118,13 +124,20 @@ restart_services() {
     echo -e "\n${GREEN}正在平滑唤醒所有已安装的网络服务...${PLAIN}"
     [ -f "/etc/init.d/openclash" ] && /etc/init.d/openclash restart >/dev/null 2>&1
     [ -f "/etc/init.d/passwall" ] && /etc/init.d/passwall restart >/dev/null 2>&1
+    [ -f "/etc/init.d/daed" ] && /etc/init.d/daed restart >/dev/null 2>&1
     [ -f "/etc/init.d/ddns-go" ] && /etc/init.d/ddns-go restart >/dev/null 2>&1
     /etc/init.d/network reload >/dev/null 2>&1
 
     echo -e "\n${GREEN}==========================================${PLAIN}"
-    echo -e "${GREEN}  🎉 恭喜！源已永久加好，DDNS-GO 及所有插件均安装成功！ ${PLAIN}"
-    echo -e "${GREEN}  👉 现在刷新网页，你截图里的软件包里就能任意搜到了！   ${PLAIN}"
+    echo -e "${GREEN}  🎉 恭喜！源已永久加好，所选插件均安装/更新成功！  ${PLAIN}"
+    echo -e "${GREEN}  👉 现在刷新网页，在路由器的服务菜单中即可看到！   ${PLAIN}"
     echo -e "${GREEN}==========================================${PLAIN}"
+    
+    if [ "$UPDATE_DAED" -eq 1 ]; then
+        echo -e "${YELLOW}【关于 DAED 的温馨提示】${PLAIN}"
+        echo -e "DAED 极其依赖内核的 eBPF 功能。若您的固件内核精简了 eBPF 支持，"
+        echo -e "应用规则时可能会报错，这属于固件底层限制，建议使用官方原版固件运行 DAED。\n"
+    fi
     exit 0
 }
 
@@ -136,22 +149,24 @@ plugin_menu() {
     echo -e "${YELLOW}[ 科学上网系列 ]${PLAIN}"
     echo -e "${GREEN}1.${PLAIN} 仅同步更新 ${YELLOW}OpenClash${PLAIN}"
     echo -e "${GREEN}2.${PLAIN} 仅同步更新 ${YELLOW}Passwall${PLAIN}"
+    echo -e "${GREEN}3.${PLAIN} 仅安装更新 ${YELLOW}DAED (eBPF高性能代理)${PLAIN}"
     echo -e "------------------------------------------"
     echo -e "${YELLOW}[ 基础增强系列 ]${PLAIN}"
-    echo -e "${GREEN}3.${PLAIN} 永久加源安装 ${YELLOW}DDNS-GO(带中文) + Argon主题 + WG(带扫码)${PLAIN}"
+    echo -e "${GREEN}4.${PLAIN} 永久加源安装 ${YELLOW}DDNS-GO + Argon主题 + WG组件${PLAIN}"
     echo -e "------------------------------------------"
     echo -e "${YELLOW}[ 一键全家桶 ]${PLAIN}"
-    echo -e "${GREEN}4.${PLAIN} ${CYAN}同时把上述所有源及插件全部写入安装 (默认推荐)${PLAIN}"
+    echo -e "${GREEN}5.${PLAIN} ${CYAN}同时把上述所有源及插件全部写入安装 (默认推荐)${PLAIN}"
     echo -e "------------------------------------------"
     echo -e "${GREEN}0.${PLAIN} 退出脚本"
     echo -e "${CYAN}==========================================${PLAIN}"
-    read -p "请选择操作 [0-4]: " PLUGIN_CHOICE
+    read -p "请选择操作 [0-5]: " PLUGIN_CHOICE
     
     case "$PLUGIN_CHOICE" in
-        1) UPDATE_OPENCLASH=1; UPDATE_PASSWALL=0; UPDATE_BASE=0; execute_update ;;
-        2) UPDATE_OPENCLASH=0; UPDATE_PASSWALL=1; UPDATE_BASE=0; execute_update ;;
-        3) UPDATE_OPENCLASH=0; UPDATE_PASSWALL=0; UPDATE_BASE=1; execute_update ;;
-        4|"") UPDATE_OPENCLASH=1; UPDATE_PASSWALL=1; UPDATE_BASE=1; execute_update ;;
+        1) UPDATE_OPENCLASH=1; UPDATE_PASSWALL=0; UPDATE_DAED=0; UPDATE_BASE=0; execute_update ;;
+        2) UPDATE_OPENCLASH=0; UPDATE_PASSWALL=1; UPDATE_DAED=0; UPDATE_BASE=0; execute_update ;;
+        3) UPDATE_OPENCLASH=0; UPDATE_PASSWALL=0; UPDATE_DAED=1; UPDATE_BASE=0; execute_update ;;
+        4) UPDATE_OPENCLASH=0; UPDATE_PASSWALL=0; UPDATE_DAED=0; UPDATE_BASE=1; execute_update ;;
+        5|"") UPDATE_OPENCLASH=1; UPDATE_PASSWALL=1; UPDATE_DAED=1; UPDATE_BASE=1; execute_update ;;
         0) exit 0 ;;
         *) echo -e "${RED}输入无效！${PLAIN}"; sleep 1; plugin_menu ;;
     esac
