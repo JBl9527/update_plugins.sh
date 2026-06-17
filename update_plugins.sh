@@ -2,7 +2,7 @@
 # ==========================================================
 # OpenWrt/ImmortalWrt - 终极插件管理中枢 (update_plugins.sh)
 # 作者: JBl9527
-# 特性: 模块化分离架构 / 云端动态拉取 / 附带防缓存加速机制
+# 特性: 纯 curl 直连模式 / 动态防缓存
 # ==========================================================
 
 RED='\033[0;31m'
@@ -11,23 +11,25 @@ YELLOW='\033[0;33m'
 CYAN='\033[0;36m'
 PLAIN='\033[0m'
 
-BASE_URL="https://ghp.ci/https://raw.githubusercontent.com/JBl9527/update_plugins.sh/main"
+# 直接使用 GitHub 官方源，不再使用国内代理！
+BASE_URL="https://raw.githubusercontent.com/JBl9527/update_plugins.sh/main"
 
 run_plugin() {
     local script_name="$1"
     local tmp_file="/tmp/${script_name}"
     
-    # URL 编码处理
+    # 针对 DDNS+argo+qr.sh 文件名中的 "+" 号进行 URL 编码
     local download_url="${BASE_URL}/${script_name}"
     download_url=$(echo "$download_url" | sed 's/+/%2B/g')
 
-    # 核心魔法：加上系统时间戳，彻底粉碎 CDN 缓存！
+    # 加入时间戳，强制每次拉取最新鲜的代码
     local nocache_url="${download_url}?t=$(date +%s)"
 
     echo -e "\n${YELLOW}==========================================${PLAIN}"
-    echo -e "${YELLOW}📥 正在强制拉取最新模块: ${script_name}...${PLAIN}"
+    echo -e "${YELLOW}📥 正在从 GitHub 官方直连拉取模块: ${script_name}...${PLAIN}"
     
-    if wget -qO "$tmp_file" "$nocache_url"; then
+    # 使用 curl 替代 wget，彻底解决 Operation not permitted 问题
+    if curl -kLs "$nocache_url" -o "$tmp_file"; then
         if [ -s "$tmp_file" ]; then
             chmod +x "$tmp_file"
             echo -e "${GREEN}✔ 拉取成功，开始执行！${PLAIN}"
@@ -40,7 +42,7 @@ run_plugin() {
             rm -f "$tmp_file"
         fi
     else
-        echo -e "${RED}❌ 模块拉取失败：网络请求错误。${PLAIN}"
+        echo -e "${RED}❌ 模块拉取失败：curl 网络请求错误。${PLAIN}"
     fi
 }
 
