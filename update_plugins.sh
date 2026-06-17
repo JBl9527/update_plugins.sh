@@ -3,7 +3,7 @@
 # ==========================================
 # OpenWrt/ImmortalWrt 24.10+ 永久加源直装脚本
 # 特性: 开启256M虚拟内存防Killed / 永久写入三方源 / 自动补全汉化依赖
-# 增强: 集成 OpenClash, Passwall, DAED, DDNS-GO 等核心插件
+# 增强: QiuSimons原版可视化DAED / 分离式依赖安装机制
 # 支持: OPKG 架构完美适配
 # ==========================================
 
@@ -20,7 +20,7 @@ UPDATE_DAED=0
 UPDATE_BASE=0
 ARCH=$(grep "OPENWRT_ARCH" /etc/os-release | awk -F '"' '{print $2}')
 
-# === 永久注入的核心追新公共源 (包含DDNS-GO、OpenClash、Passwall、DAED及万个全套依赖) ===
+# === 核心源 (用于解决底层组件、内核及 eBPF 依赖) ===
 OPKG_REPO="src/gz custom_plugins https://dl.openwrt.ai/latest/packages/${ARCH}/kiddin9"
 PUB_KEY_URL="https://dl.openwrt.ai/latest/public-key.pub"
 
@@ -41,79 +41,92 @@ execute_update() {
     echo -e "${CYAN}   正在执行 虚拟内存保卫 & 永久写入软件源 流程  ${PLAIN}"
     echo -e "${CYAN}==========================================${PLAIN}"
     
-    # ---------------- 第 0 步：挂载 256MB 虚拟内存 (彻底根除 Killed 闪退) ----------------
-    echo -e "\n${YELLOW}[0/4] 正在利用闲置磁盘临时构建 256MB 虚拟内存保障库...${PLAIN}"
-    # 强杀之前可能存在的死锁
+    # ---------------- 第 0 步：挂载 256MB 虚拟内存 ----------------
+    echo -e "\n${YELLOW}[0/5] 正在利用闲置磁盘临时构建 256MB 虚拟内存保障库...${PLAIN}"
     rm -f /var/lock/opkg.lock
     swapoff /root/swapfile >/dev/null 2>&1
     rm -f /root/swapfile >/dev/null 2>&1
     
-    # 构建真实硬盘虚拟内存
     dd if=/dev/zero of=/root/swapfile bs=1M count=256 >/dev/null 2>&1
     if [ -f "/root/swapfile" ]; then
         mkswap /root/swapfile >/dev/null 2>&1
         swapon /root/swapfile >/dev/null 2>&1
-        echo -e "✔ 256MB 虚拟内存挂载成功！系统抗压能力提升 200%，绝不闪退！"
+        echo -e "✔ 256MB 虚拟内存挂载成功！"
     else
-        echo -e "${RED}❌ 虚拟内存构建失败，转为常规模式（可能遭遇物理内存不足）。${PLAIN}"
+        echo -e "${RED}❌ 虚拟内存构建失败，转为常规模式。${PLAIN}"
     fi
 
-    # ---------------- 第 1 步：永久将插件源塞进系统配置文件 ----------------
-    echo -e "\n${GREEN}[1/4] 正在将全新每日追新源永久注入系统软件源配置...${PLAIN}"
+    # ---------------- 第 1 步：注入系统软件源配置 ----------------
+    echo -e "\n${GREEN}[1/5] 正在注入全功能底层软件源...${PLAIN}"
     OPKG_CONF="/etc/opkg/customfeeds.conf"
     OPKG_MAIN_CONF="/etc/opkg.conf"
     
-    # 导入安全公钥防止网页端报签名错误
     wget -qO - "$PUB_KEY_URL" | opkg-key add - >/dev/null 2>&1
-    
-    # 强杀以前残留的中英文死链
     sed -i '/githubusercontent/d' "$OPKG_CONF" 2>/dev/null
     sed -i '/你的用户名/d' "$OPKG_CONF" 2>/dev/null
     
-    # 永久写入全功能大源
     if ! grep -q "custom_plugins" "$OPKG_CONF" 2>/dev/null; then
         echo "$OPKG_REPO" >> "$OPKG_CONF"
     fi
-    echo -e "✔ 软件源配置已成功写入！"
-    echo -e "👉 ${CYAN}${OPKG_REPO}${PLAIN}"
+    echo -e "✔ 源配置写入完毕！"
 
-    # ---------------- 第 2 步：刷新软件源索引 (此时由于有虚拟内存，100%成功) ----------------
-    echo -e "\n${GREEN}[2/4] 正在对全套软件源执行安全刷新列表...${PLAIN}"
-    # 临时关闭签名校验防止 kiddin9 特色报错
+    # ---------------- 第 2 步：刷新软件源索引 ----------------
+    echo -e "\n${GREEN}[2/5] 正在安全刷新软件列表...${PLAIN}"
     sed -i 's/option check_signature/#option check_signature/g' "$OPKG_MAIN_CONF"
-    
     opkg update
-    
     echo -e "✔ 软件源列表全部同步完毕！"
 
-    # ---------------- 第 3 步：一网打尽安装核心全家桶 (顺藤摸瓜自动解决所有依赖) ----------------
-    echo -e "\n${GREEN}[3/4] 正在长驱直入安装/更新选中插件及全套底层依赖...${PLAIN}"
+    # ---------------- 第 3 步：安装底层依赖与常规核心 ----------------
+    echo -e "\n${GREEN}[3/5] 正在从源批量安装底层核心组件与常规插件...${PLAIN}"
     
     TARGET_PACKAGES=""
     [ "$UPDATE_OPENCLASH" -eq 1 ] && TARGET_PACKAGES="$TARGET_PACKAGES luci-app-openclash"
     [ "$UPDATE_PASSWALL" -eq 1 ] && TARGET_PACKAGES="$TARGET_PACKAGES luci-app-passwall"
     
-    # 新增：加入 DAED 及其核心组件
-    [ "$UPDATE_DAED" -eq 1 ] && TARGET_PACKAGES="$TARGET_PACKAGES luci-app-daed daed"
+    # 注意：这里仅安装 daed 核心引擎，不安装源里的废材版 luci
+    [ "$UPDATE_DAED" -eq 1 ] && TARGET_PACKAGES="$TARGET_PACKAGES daed"
     
     if [ "$UPDATE_BASE" -eq 1 ]; then
-        # 一口气补齐：DDNS-GO本体、官方中文语言包、Argon主题、Argon配置面板、WireGuard组件、qrencode扫码引擎、新版UI必备的luci-compat兼容层
         TARGET_PACKAGES="$TARGET_PACKAGES luci-app-ddns-go luci-i18n-ddns-go-zh-cn luci-theme-argon luci-app-argon-config luci-proto-wireguard wireguard-tools qrencode luci-compat"
     fi
     
     if [ -n "$TARGET_PACKAGES" ]; then
-        echo -e "🚀 正在安装: ${YELLOW}${TARGET_PACKAGES}${PLAIN}"
-        # 覆盖安装，解决所有残留依赖阻断
-        opkg install --force-overwrite --force-checksum $TARGET_PACKAGES 2>&1 | grep -Ev "remove_obsolesced_files|Failed to determine obsolete files|Couldn't unlink"
+        echo -e "🚀 批量执行: ${YELLOW}${TARGET_PACKAGES}${PLAIN}"
+        opkg install --force-overwrite --force-checksum $TARGET_PACKAGES 2>&1 | grep -Ev "remove_obsolesced_files|Failed to determine|Couldn't unlink"
         opkg upgrade --force-overwrite --force-checksum $TARGET_PACKAGES 2>/dev/null | grep -Ev "remove_obsolesced_files"
-        echo -e "✔ 所有插件及其关联的底层核心依赖、汉化包已全部装妥！"
     fi
 
-    # ---------------- 第 4 步：卸载虚拟内存，恢复纯净磁盘 ----------------
-    echo -e "\n${YELLOW}[4/4] 流程结束，正在安全收回并卸载虚拟内存空间...${PLAIN}"
+    # ---------------- 第 4 步：独立安装 QiuSimons 原版可视化界面 ----------------
+    if [ "$UPDATE_DAED" -eq 1 ]; then
+        echo -e "\n${GREEN}[4/5] 正在通过独立通道挂载 QiuSimons 原版可视化界面...${PLAIN}"
+        
+        # 强制删除可能被关联带入的魔改版界面
+        opkg remove luci-app-daed >/dev/null 2>&1 
+        
+        # 利用 GitHub API 获取最新发布版本并使用加速镜像拉取
+        DOWNLOAD_URL=$(wget -qO- https://api.github.com/repos/QiuSimons/luci-app-daed/releases/latest 2>/dev/null | grep "browser_download_url" | grep "all.ipk" | head -n 1 | awk -F '"' '{print $4}')
+        
+        if [ -n "$DOWNLOAD_URL" ]; then
+            echo -e "🔗 获取到最新官方包链接，正在加速下载..."
+            wget -qO /tmp/qs-daed.ipk "https://mirror.ghproxy.com/${DOWNLOAD_URL}"
+            if [ -f "/tmp/qs-daed.ipk" ]; then
+                opkg install /tmp/qs-daed.ipk --force-overwrite 2>/dev/null
+                rm -f /tmp/qs-daed.ipk
+                echo -e "✔ QiuSimons 原版可视化界面挂载成功！"
+            else
+                echo -e "${RED}❌ UI 包下载失败。${PLAIN}"
+            fi
+        else
+            echo -e "${RED}❌ 无法获取 GitHub 最新发布链接，跳过 UI 注入。${PLAIN}"
+        fi
+    else
+        echo -e "\n${YELLOW}[4/5] 跳过单独界面的安装...${PLAIN}"
+    fi
+
+    # ---------------- 第 5 步：卸载虚拟内存，恢复纯净磁盘 ----------------
+    echo -e "\n${YELLOW}[5/5] 流程结束，正在安全收回并卸载虚拟内存空间...${PLAIN}"
     swapoff /root/swapfile >/dev/null 2>&1
     rm -f /root/swapfile >/dev/null 2>&1
-    # 还原系统安全签名校验设置
     sed -i 's/#option check_signature/option check_signature/g' "$OPKG_MAIN_CONF"
     echo -e "✔ 内存及系统配置恢复纯净状态。"
     
@@ -129,14 +142,14 @@ restart_services() {
     /etc/init.d/network reload >/dev/null 2>&1
 
     echo -e "\n${GREEN}==========================================${PLAIN}"
-    echo -e "${GREEN}  🎉 恭喜！源已永久加好，所选插件均安装/更新成功！  ${PLAIN}"
-    echo -e "${GREEN}  👉 现在刷新网页，在路由器的服务菜单中即可看到！   ${PLAIN}"
+    echo -e "${GREEN}  🎉 恭喜！所选插件均已就绪。  ${PLAIN}"
+    echo -e "${GREEN}  👉 请刷新路由器网页后台，尽情享用可视化界面！   ${PLAIN}"
     echo -e "${GREEN}==========================================${PLAIN}"
     
     if [ "$UPDATE_DAED" -eq 1 ]; then
         echo -e "${YELLOW}【关于 DAED 的温馨提示】${PLAIN}"
-        echo -e "DAED 极其依赖内核的 eBPF 功能。若您的固件内核精简了 eBPF 支持，"
-        echo -e "应用规则时可能会报错，这属于固件底层限制，建议使用官方原版固件运行 DAED。\n"
+        echo -e "如果通过 LuCI 菜单打不开可视化界面，"
+        echo -e "您可以直接在浏览器访问：${CYAN}http://您的路由器IP:2023${PLAIN} 进入独立大屏后台。\n"
     fi
     exit 0
 }
@@ -144,12 +157,12 @@ restart_services() {
 plugin_menu() {
     clear
     echo -e "${CYAN}==========================================${PLAIN}"
-    echo -e "${CYAN}  系统架构: ${SELECTED_MANAGER} 模式 | 256M虚拟内存保卫版  ${PLAIN}"
+    echo -e "${CYAN}  系统架构: ${SELECTED_MANAGER} 模式 | 纯净独立 UI 保卫版  ${PLAIN}"
     echo -e "${CYAN}==========================================${PLAIN}"
     echo -e "${YELLOW}[ 科学上网系列 ]${PLAIN}"
     echo -e "${GREEN}1.${PLAIN} 仅同步更新 ${YELLOW}OpenClash${PLAIN}"
     echo -e "${GREEN}2.${PLAIN} 仅同步更新 ${YELLOW}Passwall${PLAIN}"
-    echo -e "${GREEN}3.${PLAIN} 仅安装更新 ${YELLOW}DAED (eBPF高性能代理)${PLAIN}"
+    echo -e "${GREEN}3.${PLAIN} 仅安装更新 ${YELLOW}DAED (原版可视化UI + eBPF核心)${PLAIN}"
     echo -e "------------------------------------------"
     echo -e "${YELLOW}[ 基础增强系列 ]${PLAIN}"
     echo -e "${GREEN}4.${PLAIN} 永久加源安装 ${YELLOW}DDNS-GO + Argon主题 + WG组件${PLAIN}"
