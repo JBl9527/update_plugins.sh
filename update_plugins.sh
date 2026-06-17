@@ -13,7 +13,7 @@ CYAN='\033[0;36m'
 PLAIN='\033[0m'
 
 # 你的 GitHub 仓库原始地址 (自带国内镜像加速前缀)
-BASE_URL="https://raw.githubusercontent.com/JBl9527/update_plugins.sh/main"
+BASE_URL="https://mirror.ghproxy.com/https://raw.githubusercontent.com/JBl9527/update_plugins.sh/main"
 
 # 执行远端脚本的核心函数
 run_plugin() {
