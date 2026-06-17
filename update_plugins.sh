@@ -2,9 +2,8 @@
 # ==========================================================
 # OpenWrt/ImmortalWrt - 终极插件管理中枢 (update_plugins.sh)
 # 作者: JBl9527
-# 特性: 模块化分离架构 / 云端动态拉取 / 附带国内镜像加速
+# 特性: 模块化分离架构 / 云端动态拉取 / 附带防缓存加速机制
 # ==========================================================
-
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -12,35 +11,32 @@ YELLOW='\033[0;33m'
 CYAN='\033[0;36m'
 PLAIN='\033[0m'
 
-# 你的 GitHub 仓库原始地址 (自带国内镜像加速前缀)
-BASE_URL="https://ghproxy.net/https://raw.githubusercontent.com/JBl9527/update_plugins.sh/main"
+BASE_URL="https://ghp.ci/https://raw.githubusercontent.com/JBl9527/update_plugins.sh/main"
 
-# 执行远端脚本的核心函数
 run_plugin() {
     local script_name="$1"
     local tmp_file="/tmp/${script_name}"
     
-    # 针对 DDNS+argo+qr.sh 文件名中的 "+" 号进行 URL 编码处理 (%2B) 确保 wget 不会报错
+    # URL 编码处理
     local download_url="${BASE_URL}/${script_name}"
     download_url=$(echo "$download_url" | sed 's/+/%2B/g')
 
+    # 核心魔法：加上系统时间戳，彻底粉碎 CDN 缓存！
+    local nocache_url="${download_url}?t=$(date +%s)"
+
     echo -e "\n${YELLOW}==========================================${PLAIN}"
-    echo -e "${YELLOW}📥 正在从云端拉取模块: ${script_name}...${PLAIN}"
+    echo -e "${YELLOW}📥 正在强制拉取最新模块: ${script_name}...${PLAIN}"
     
-    # 下载脚本
-    if wget -qO "$tmp_file" "$download_url"; then
+    if wget -qO "$tmp_file" "$nocache_url"; then
         if [ -s "$tmp_file" ]; then
             chmod +x "$tmp_file"
             echo -e "${GREEN}✔ 拉取成功，开始执行！${PLAIN}"
             echo -e "${YELLOW}==========================================${PLAIN}\n"
             
-            # 执行子脚本
             sh "$tmp_file"
-            
-            # 阅后即焚
             rm -f "$tmp_file"
         else
-            echo -e "${RED}❌ 模块拉取失败：文件为空。请检查网络或仓库是否存在此文件。${PLAIN}"
+            echo -e "${RED}❌ 模块拉取失败：文件为空。${PLAIN}"
             rm -f "$tmp_file"
         fi
     else
@@ -48,7 +44,6 @@ run_plugin() {
     fi
 }
 
-# 主菜单循环
 show_menu() {
     while true; do
         clear
@@ -87,5 +82,4 @@ show_menu() {
     done
 }
 
-# 启动菜单
 show_menu
